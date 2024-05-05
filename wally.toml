@@ -1,0 +1,17 @@
+[package]
+name = "dazscripts/animationmanager"
+version = "0.0.1"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+
+exclude = ["**"]
+include = [
+    "default.project.json",
+    "src",
+    "src/**",
+    "LICENSE",
+    "wally.toml",
+    "README.md",
+]
+
+[dependencies]
