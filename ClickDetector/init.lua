@@ -37,7 +37,7 @@ function ClickDetector.new(customProps: properties?)
 	local metatable = getmetatable(self)
 	metatable.data = {
 		MaxActivationDistance = 30,
-		CursorIcon = "",
+		CursorIcon = "rbxasset://SystemCursors/PointingHand",
 		ClientOnly = false,
 		Adornee = nil,
 
@@ -128,7 +128,7 @@ end
 local function onHover(self, mouse: Mouse)
 	if self._currentlyHovering == false then
 		self._currentlyHovering = true
-		mouse.Icon = self.CursorIcon
+		InputService.MouseIcon = self.CursorIcon
 		self.MouseHoverEnter:Fire()
 	end
 
@@ -138,7 +138,7 @@ end
 local function onLeave(self, mouse: Mouse)
 	if self._currentlyHovering then
 		self._currentlyHovering = false
-		mouse.Icon = ""
+		InputService.MouseIcon = ""
 		self.MouseHoverLeave:Fire()
 	end
 
@@ -227,9 +227,6 @@ if IsClient then
 end
 
 if IsServer then
-	local a = ClickDetector.new({ClientOnly = false, CursorIcon = "rbxassetid://13923614662", Adornee = workspace.Entities.daz_fe})
-	local s = ClickDetector.new({ClientOnly = false, Adornee = workspace.Baseplate})
-
 	mouseClick.OnServerEvent:Connect(onMouseClick)
 	checkDetector.OnServerInvoke = function(identifier)
 		return (ActiveDetectors[identifier] and true) or false
