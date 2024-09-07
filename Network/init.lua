@@ -4,7 +4,7 @@ local Players = game:GetService("Players")
 
 local Spawn = require(script.Spawn)
 local Util = require(script.Util)
-
+ 
 local activeRemotes = {}
 local Client = {
 	_activeRemotes = activeRemotes,
