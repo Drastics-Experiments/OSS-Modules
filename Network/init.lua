@@ -3,6 +3,7 @@ local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
 local Spawn = require(script.Spawn)
+local Util = require(script.Util)
 
 local activeRemotes = {}
 local Client = {
@@ -19,83 +20,20 @@ local dataQueue = {}
 local dataQueueUnreliable = {}
 local reliableHasContents = false
 local unreliableHasContents = false
+local IsServer, IsClient = RunService:IsServer(), RunService:IsClient()
 local UnreliableEvent: UnreliableRemoteEvent, Event: RemoteEvent
+local checkIfConvertable = Util.checkIfConvertable
+local convertToBuffer = Util.convertToBuffer
+local checkIfRemoteExists
 
-local function checkIfConvertable(data: {})
-	local CanConvert = true
-	for i,v in data do
-		if typeof(v) == "table" then
-			if checkIfConvertable(v) == false then
-				CanConvert = false
-			end
-		else
-			local t = type(v)
-			if t == "userdata" then
-				return false
-			end
+local INSERT = table.insert
+local CLEAR = table.clear
+local UNPACK = table.unpack
+local PACK = table.pack
 
-			if t == "function" then
-				error("Retard")
-			end
-		end
-	end
+-- // SHARED
 
-	return CanConvert
-end
-
-local function convertToBuffer(data: {})
-	local json = Http:JSONEncode(data)
-	local newData = buffer.fromstring(json)
-
-	return newData
-end
-
-local function disconnect(self)
-	self._listeners[self._fn] = nil
-	table.clear(self)
-end
-
-local function onEventRecieved<Data...>(self: serverRemote, Player: Player)
-	local limitPerSecond = self._rateLimit
-	local currentTally = self._currentTally
-	local lastReset = self._lastReset
-	
-	if limitPerSecond > 0 then
-		if os.clock() - lastReset >= 1 then
-			table.clear(currentTally)
-			self._lastReset = os.clock()
-			lastReset = self._lastReset
-		end
-		
-		if not currentTally[Player] then
-			currentTally[Player] = 0
-		end
-		
-		if currentTally[Player] > limitPerSecond then
-			return false
-		end
-		
-		currentTally[Player] += 1
-	end
-	
-	return true
-end
-
-local function setRateLimit(self: clientRemote | serverRemote, rateLimit: number)
-	if rateLimit and rateLimit >= 0 then
-		self._rateLimit = rateLimit
-	end
-end
-
-local function clientFire<T...>(self: clientRemote, ...: T...)
-	local data = {
-		[1] = self._name,
-		[2] = {...}
-	}
-
-	local canConvert = checkIfConvertable(data)
-	if canConvert then data = convertToBuffer(data) end
-	table.insert((self._reliable and dataQueue) or dataQueueUnreliable, data)
+local function updateValues(self)
 	if self._reliable then
 		reliableHasContents = true
 	else
@@ -103,7 +41,12 @@ local function clientFire<T...>(self: clientRemote, ...: T...)
 	end
 end
 
-local function clientListen<T>(self: clientRemote, fn: T)
+local function disconnect(self)
+	self._listeners[self._fn] = nil
+	CLEAR(self)
+end
+
+local function Listen<T>(self, fn: T)
 	self._listeners[tostring(fn)] = fn
 
 	return {
@@ -113,91 +56,115 @@ local function clientListen<T>(self: clientRemote, fn: T)
 	}
 end
 
-function Client.Remote(Name: string, Reliable: boolean?)
-	local self = {
-		_listeners = {},
-		_reliable = if Reliable ~= nil then Reliable else true,
-		_name = Name,
-		
-		Fire = clientFire,
-		Listen = clientListen,
-	}
+local function Once<fn>(self: serverRemote & clientRemote, fn: fn)
+	if typeof(fn) ~= "function" then error("Retard") end
+	
+	local connection
+	connection = self:Listen(function(...)
+		Spawn(fn, ...)
+		connection:Disconnect()
+	end)
+end
 
-	activeRemotes[Name] = self
-	return self
+local function waitFor(self: serverRemote & clientRemote)
+	local running = coroutine.running()
+	local connection
+	
+	connection = self:Listen(function(...)
+		connection:Disconnect()
+		task.defer(running, ...)
+	end)
+
+	return coroutine.yield() 
+end
+
+local FRAME_RATE = 1/60
+local Network = {}
+
+local function onEventRecieved(self: serverRemote, Player: Player)
+	local limitPerSecond = self._rateLimit
+	local currentTally = self._currentTally
+	local lastReset = self._lastReset
+
+	if limitPerSecond > 0 then
+		if os.clock() - lastReset >= 1 then
+			CLEAR(currentTally)
+			self._lastReset = os.clock()
+			lastReset = self._lastReset
+		end
+
+		if not currentTally[Player] then
+			currentTally[Player] = 0
+		end
+
+		if currentTally[Player] > limitPerSecond then
+			if self._onRateLimitReached then
+				self._onRateLimitReached(Player)
+			end
+
+			return false
+		end
+
+		currentTally[Player] += 1
+	end
+
+	return true
 end
 
 
 
+-- // SERVER
 
-local function serverFire<T...>(self: serverRemote, Players: Player | { Player }, ...: T...)
-	if typeof(Players) ~= "table" then Players = { Players } end
+local function setRateLimit(self: serverRemote, rateLimit: number, fn: (Player: Player) -> ())
+	if typeof(fn) ~= "function" then error("Did not recieve a function") return end 
+	-- if fn isnt provided it will still exit the function
+
+	if rateLimit and rateLimit >= 0 then
+		self._rateLimit = rateLimit
+		self._onRateLimitReached = fn
+	end
+end
+
+local function serverFire<T...>(self: serverRemote, Players: { Player } | Player, ...: T...)
 	local data = {
 		[1] = self._name,
-		[2] = {...}
+		[2] = PACK(...)
 	}
 
 	local canConvert = checkIfConvertable(data)
 	if canConvert then data = convertToBuffer(data) end
 	local correctQueue = (self._reliable and dataQueue) or dataQueueUnreliable
 	
-	for i,v in Players do
-		if not correctQueue[v] then
-			correctQueue[v] = {}
+	if IsServer then
+		if typeof(Players) ~= "table" then Players = { Players } end
+		for i,v in Players do
+			if not correctQueue[v] then
+				correctQueue[v] = {}
+			end
+
+			INSERT(correctQueue[v], data)
 		end
-		
-		table.insert(correctQueue[v], data)
+	elseif IsClient then
+		INSERT(correctQueue, data)	
 	end
-	
-	if self._reliable then
-		reliableHasContents = true
-	else
-		unreliableHasContents = true
-	end
+
+	updateValues(self)
 end
 
 local function serverFireAll<T...>(self: serverRemote, ...: T...)
-	self:Fire(Players:GetPlayers(), ...)
+	local args = PACK(...)
+	self:Fire(Players:GetPlayers(), UNPACK(args))
 end
 
-local function serverListen<T>(self: serverRemote, fn: T)
-	self._listeners[tostring(fn)] = fn
+local function onServerInvoke<fn>(self: serverFunction, fn: fn)
+	if typeof(fn) ~= "function" then error("retard") end
+	self._callback = fn
+end 
 
-	return {
-		_listeners = self._listeners,
-		_fn = tostring(fn),
-		Disconnect = disconnect
-	}
-end
-
-function Server.Remote(Name: string, Reliable: boolean?)
-	local self = {
-		_listeners = {},
-		_reliable = if Reliable ~= nil then Reliable else true,
-		_rateLimit = 0,
-		_lastReset = 0,
-		_currentTally = {},
-		_name = Name,
-		_onEvent = onEventRecieved,
-		
-		Fire = serverFire,
-		FireAll = serverFireAll,
-		Listen = serverListen,
-		RateLimit = setRateLimit
-	}
-	
-	activeRemotes[Name] = self
-	return self
-end
-
-
-local FRAME_RATE = 1/60
-local Network = {}
 
 local function onServerEvent(plr: Player, data)
 	for i,v in data do
 		if typeof(v) == "buffer" then
-			print(data)
 			local decoded = Http:JSONDecode(buffer.tostring(v))
 			v = decoded
 			data[i] = decoded
@@ -205,10 +172,20 @@ local function onServerEvent(plr: Player, data)
 		
 		local name = v[1]
 		local remote = activeRemotes[name]
-
-		for i2, v2 in remote._listeners do
-			if not remote:_onEvent(plr) then print("Rate Limited") continue end
-			Spawn(v2, plr, v[2])
+		local __type = remote.__type
+		
+		if __type == "Remote" then
+			for i2, v2 in remote._listeners do
+				if not remote:_onEvent(plr) then continue end
+				Spawn(v2, plr, UNPACK(v[2]))
+			end
+		elseif __type == "Function" then
+			if remote._callback == nil then continue end
+			
+			serverFire(remote, {plr}, 
+				v[3],
+				{remote._callback(plr, UNPACK(v[2]))}
+			)
 		end
 	end
 end
@@ -220,6 +197,13 @@ function Network.Server()
 		
 		Event.Parent = script
 		UnreliableEvent.Parent = script
+		
+		checkIfRemoteExists = Server.Function("_CheckRemoteExists")
+		checkIfRemoteExists:OnServerInvoke(function(plr, remoteName)
+			if activeRemotes[remoteName] then return true end
+			while not activeRemotes[remoteName] do task.wait(0.1) end
+			return true
+		end)
 		
 		Event.OnServerEvent:Connect(onServerEvent)
 		UnreliableEvent.OnServerEvent:Connect(onServerEvent)
@@ -234,18 +218,16 @@ function Network.Server()
 					Event:FireClient(player, remoteCall)
 				end
 
-				table.clear(dataQueue)
+				CLEAR(dataQueue)
 				reliableHasContents = false
 			end
 
 			if unreliableHasContents then
-				for _, remoteCall in dataQueue do
-					for i,v in remoteCall.Players do
-						UnreliableEvent:FireClient(v, remoteCall.Data)
-					end
+				for player, remoteCall in dataQueue do
+					UnreliableEvent:FireClient(player, remoteCall)
 				end
 				
-				table.clear(dataQueueUnreliable)
+				CLEAR(dataQueueUnreliable)
 				unreliableHasContents = false
 			end
 		end)
@@ -256,18 +238,107 @@ function Network.Server()
 	return Server
 end
 
+function Server.Remote(Name: string, Reliable: boolean?) : serverRemote
+	local self = {
+		_listeners = {},
+		_reliable = if Reliable ~= nil then Reliable else true,
+		_rateLimit = 0,
+		_lastReset = 0,
+		_currentTally = {},
+		_name = Name,
+		_onEvent = onEventRecieved,
+		_onRateLimitReached = function() print("Rate Limit") end,
+		
+		__type = "Remote",
+		
+		Fire = serverFire,
+		FireAll = serverFireAll,
+		Once = Once,
+		Wait = waitFor,
+		Listen = Listen,
+		RateLimit = setRateLimit
+	}
+
+	activeRemotes[Name] = self
+	return self
+end
+
+function Server.Function(Name: string, Reliable: boolean?)
+	local self = {
+		OnServerInvoke = onServerInvoke,
+
+		_reliable = if Reliable ~= nil then Reliable else true,
+		_invokeResultsStorage = {},
+		_currentYields = {},
+		_callback = nil,
+		_name = Name,
+
+		__type = "Function",
+	}
+
+	activeRemotes[Name] = self
+	return self
+end
+
+
+-- // CLIENT
+
+local function invokeServer<T...>(self: clientFunction, ...: T...)
+	local id = Http:GenerateGUID(false)
+	local data = {
+		[1] = self._name,
+		[2] = PACK(...),
+		[3] = id
+	}
+
+	local canConvert = checkIfConvertable(data)
+	if canConvert then data = convertToBuffer(data) end
+
+	INSERT((self._reliable and dataQueue) or dataQueueUnreliable, data)
+	updateValues(self)
+	self._currentYields[id] = coroutine.running()
+	
+	return coroutine.yield()
+end
+
+local function clientFire<T...>(self: clientRemote, ...: T...)
+	serverFire(self, nil, ...)
+end
+
 local function onClientEvent(data)
+	local unsuccessful = {}
 	for i,v in data do
 		if typeof(v) == "buffer" then
 			local decoded = Http:JSONDecode(buffer.tostring(v))
 			v = decoded
 			data[i] = decoded
 		end
-
-		for i2, v2 in activeRemotes[v[1]]._listeners do
-			Spawn(v2, v[2])
+		
+		local name = v[1]
+		local remote = activeRemotes[name]
+		if activeRemotes[name] == nil then table.insert(unsuccessful, v) continue end
+		
+		local __type = remote.__type
+		
+		if __type == "Remote" then
+			local ran = false
+			for i2, v2 in remote._listeners do
+				Spawn(v2, UNPACK(v[2]))
+				ran = true
+			end
+			
+			if ran == false then table.insert(unsuccessful, v) continue end
+		elseif __type == "Function" then
+			local contents = v[2]
+			local data = contents[2]
+			local id = contents[1]
+			
+			task.spawn(remote._currentYields[id], UNPACK(data))
+			remote._currentYields[id] = nil
 		end
 	end
+	
+	task.delay(0.2, onClientEvent, unsuccessful)
 end
 
 function Network.Client()
@@ -279,6 +350,7 @@ function Network.Client()
 	end
 	
 	if not Client._initialized then
+		checkIfRemoteExists = Client.Function("_CheckRemoteExists")
 		UnreliableEvent = r2
 		Event = r1
 		Client._initialized = true
@@ -294,12 +366,12 @@ function Network.Client()
 			
 			if #dataQueue > 0 then
 				Event:FireServer(dataQueue)
-				table.clear(dataQueue)
+				CLEAR(dataQueue)
 			end
 			
 			if #dataQueueUnreliable > 0 then
 				UnreliableEvent:FireServer(dataQueueUnreliable)
-				table.clear(dataQueueUnreliable)
+				CLEAR(dataQueueUnreliable)
 			end
 		end)
 	end
@@ -307,7 +379,47 @@ function Network.Client()
 	return Client
 end
 
-export type serverRemote = typeof(Server.Remote(table.unpack(...)))
-export type clientRemote = typeof(Client.Remote(table.unpack(...)))
+function Client.Remote(Name: string, Reliable: boolean?) : clientRemote
+	checkIfRemoteExists:Invoke(Name)
+	local self = {
+		Fire = clientFire,
+		Listen = Listen,
+		Once = Once,
+		Wait = waitFor,
+		
+		_listeners = {},
+		_reliable = if Reliable ~= nil then Reliable else true,
+		_name = Name,
+
+		__type = "Remote",
+	}
+
+	activeRemotes[Name] = self
+	return self
+end
+
+function Client.Function(Name: string, Reliable: boolean?)
+	if Name ~= "_CheckRemoteExists" then
+		checkIfRemoteExists:Invoke(Name)
+	end
+	
+	local self = {
+		Invoke = invokeServer,
+
+		_reliable = if Reliable ~= nil then Reliable else true,
+		_currentYields = {},
+		_name = Name,
+
+		__type = "Function",
+	}
+
+	activeRemotes[Name] = self
+	return self
+end
+
+export type serverRemote = typeof(Server.Remote(UNPACK(...)))
+export type serverFunction = typeof(Server.Function(UNPACK(...)))
+export type clientRemote = typeof(Client.Remote(UNPACK(...)))
+export type clientFunction = typeof(Client.Function(UNPACK(...)))
 
 return table.freeze(Network)
