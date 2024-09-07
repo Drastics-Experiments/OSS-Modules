@@ -338,7 +338,7 @@ local function onClientEvent(data)
 		end
 	end
 	
-	task.delay(0.2, onClientEvent, unsuccessful)
+	if #unsuccessful > 0 then task.delay(0.2, onClientEvent, unsuccessful) end
 end
 
 function Network.Client()
