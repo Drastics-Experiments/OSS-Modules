@@ -4,5 +4,5 @@
 - Custom TweenService
 - Quest Creator Module
 - Pathfinding Module
-- Custom Humaniid
-- Inventory System
+- Custom Humanoid (wip)
+- Inventory System (wip)
