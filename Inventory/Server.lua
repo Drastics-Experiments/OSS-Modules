@@ -8,12 +8,14 @@ local DEFAULT_PROPS = {
 
 local p = script.Parent -- laziness is fire
 
-local addItem = Instance.new("RemoteFunction")
-local buyItem = Instance.new("RemoteEvent")
+local addItem = Instance.new("RemoteEvent")
+local removeItem = Instance.new("RemoteEvent")
+local buyItem = Instance.new("RemoteFunction")
+local sellItem = Instance.new("RemoteFunction")
 local sendInventory = Instance.new("RemoteEvent")
 
 addItem.Name, buyItem.Name = "AddItem", "BuyItem"
-addItem.Parent, buyItem.Parent = p,p
+addItem.Parent, removeItem.Parent, sellItem.Parent, sendInventory.Parent, buyItem.Parent = p,p,p,p,p
 
 local activeInventories = {}
 local inventory = {}
@@ -47,6 +49,7 @@ function inventory:AddItem(item: string, amount: number)
     self.TotalItems += amount
     self.TotalWeight += itemData.Weight * amount
     self.Items[item] = storedData
+    addItem:FireAllClients(self._identifier, item, amount)
 end
 
 function inventory:RemoveItem(item: string, amount: number)
@@ -58,6 +61,7 @@ function inventory:RemoveItem(item: string, amount: number)
     itemToRemove.Amount -= amount
     self.TotalItems -= amount
     self.TotalWeight -= itemData.Weight * amount
+    removeItem:FireAllClients(self._identifier, item, amount)
 end
 
 function inventory:BuyItem(item: string, amount: number)
@@ -105,6 +109,11 @@ end
 
 function inventory.Get<T>(identifier: T)
     return activeInventories[identifier]
+end
+
+buyItem.OnServerInvoke = function(player, i, item, v)
+    local inventory = activeInventories[i]
+    return inventory:BuyItem(item,v)
 end
 
 return inventory
