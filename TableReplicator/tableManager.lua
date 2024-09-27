@@ -13,6 +13,22 @@ function tableManager.registerTable(tbl)
 	print(tableCache)
 end
 
+function tableManager.clearCache(cachedata)
+	for i,v in tableCache do
+		if not cachedata[i] then
+			tableCache[i] = nil
+		end
+	end
+
+	for i,v in clientCache do
+		for i2, v2 in v do
+			if not cachedata[i2] then
+				v[i2] = nil
+			end
+		end
+	end
+end
+
 function tableManager.getIdFromTable(tbl)
 	if not tableCache[tostring(tbl)] then
 		tableManager.registerTable(tbl)

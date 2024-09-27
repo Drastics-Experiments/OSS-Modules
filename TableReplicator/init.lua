@@ -9,46 +9,73 @@ local signal = require(script.signal)
 local bufferLib = require(script.buffer)
 
 local tableInitQueue, propertyUpdatesQueue = {}, {}
+local activeTables = {}
 local tableReplicator = {}
 local methods = {}
 
+local function typeHandler(self, value)
+    local metatable = getmetatable(self)
+    local whitelistedPlayers = metatable.whitelistedPlayers
+    local cache = metatable.cacheusage
+
+    if type(value) == "table" then
+        if isServer then
+            tableManager.registerTable(value)
+            tableManager.replicateTable(value, whitelistedPlayers)
+        end
+        
+        table.insert(cache, tostring(value))
+        
+        local newSelf = tableReplicator.createMetatable()
+        local newMetatable = getmetatable(newSelf)
+
+        newMetatable.id = tostring(value)
+        newMetatable.base = metatable.base
+
+        for i,v in value do
+            newSelf[i] = v
+        end
+
+        return newSelf
+    elseif typeof(value) == "Instance" then
+        if isServer then
+            instanceManager.registerInstance(value)
+            instanceManager.replicateInstances(value, whitelistedPlayers)
+        end
+
+        table.insert(cache, "instance: " .. value:GetDebugId(0))
+        return value
+    elseif type(value) == "string" then
+        return tableManager.getTableFromId(value) 
+        or instanceManager.getInstanceFromId(value) 
+        or value
+    end
+end
+
 local function __newindex(self, index, value)
-    -- NOTE: optimize this
 	local metatable = getmetatable(self)
-
-	local propsignals = metatable.propertysignals
 	local data = metatable.__index
-
 	local oldValue = data[index]
 
-	if typeof(index) == "Instance" then
-		instanceManager.registerInstance(index)
-		table.insert(metatable.usedinstances, index)
-		instanceManager.replicateInstances(metatable.usedinstances, metatable.whitelistedPlayers)
-	end
+    local oldMetatable = getmetatable(oldValue)
+    if oldMetatable and oldMetatable.__type == "replicatedTable" then
+        local base = oldMetatable.base
+        local mainMeta = getmetatable(base)
+        local cache = mainMeta.cacheusage
+        table.remove(cache, table.find(oldMetatable.id))
+    end
 
-	if typeof(value) == "Instance" then
-		instanceManager.registerInstance(value)
-		table.insert(metatable.usedinstances, value)
-		if isServer then
-			instanceManager.replicateInstances(metatable.usedinstances, metatable.whitelistedPlayers)
-		end
-	elseif typeof(value) == "table" then
-		local newSelf = tableReplicator.createMetatable()
-		local newMetatable = getmetatable(newSelf)
-		
-		newMetatable.base = metatable.base
-		newMetatable.id = tostring(newSelf)
-		
-		for i,v in value do
-			newSelf[i] = v
-		end
-
-		value = newSelf
-	end
-
-	data[index] = value
+	data[typeHandler(self, index)] = typeHandler(self, value)
 	if value ~= oldValue then
+		if isServer then	
+			if not propertyUpdatesQueue[metatable.id] then	
+				propertyUpdatesQueue[metatable.id] = {}
+			end
+		
+			local currentQueue = propertyUpdatesQueue[metatable.id]
+			currentQueue[copy(index, true)] = copy(value, true)
+		end
+
 		self:FireChanged(index, value, oldValue)
 	end
 	
@@ -56,18 +83,15 @@ local function __newindex(self, index, value)
 end
 
 function tableReplicator.createMetatable()
-	local self = {
+	local self = setmetatable({
 		Changed = signal.new(),
 		GetPropertyChangedSignal = methods.GetPropertyChangedSignal,
 		FireChanged = methods.FireChanged,
 		GetRawTable = methods.GetRawTable,
 		ReplicateTable = methods.ReplicateTable,
-	} 
-	
-	setmetatable(self, {
+	}, {
 		__index = {},
-		usedinstances = {},
-		usedtables = {},
+		cacheusage = {},
 		__type = "replicatedTable",
 		__newindex = __newindex,
 		propertysignals = {},
@@ -86,7 +110,7 @@ function tableReplicator.new(tableProps: {
 	})
 
 	local self = tableReplicator.createMetatable()
-	
+
 	local metatable = getmetatable(self)
 	metatable.whitelistedPlayers = tableProps.PlayersToReplicate
 	metatable.base = self
@@ -103,6 +127,8 @@ function tableReplicator.new(tableProps: {
 			end
 		end
 	end
+
+    activeTables[Name] = self
 
 	return self
 end
@@ -136,13 +162,8 @@ local function copy(value, networkify)
 		return (networkify and instanceManager.getIdFromInstance(value)) or value
 	elseif typeof(value) == "buffer" then
 		value = httpService:JSONDecode(buffer.tostring(value))
-		local newTable = {}
 		
-		for i,v in value do -- ignore type error
-			newTable[copy(i, networkify)] = copy(v, networkify)
-		end
-		
-		return newTable
+		return copy(newTable, networkify)
 	elseif type(value) == "string" then
 		value = (networkify and tableManager.getTableFromId(value) or instanceManager.getInstanceFromId(value)) or value
 	end
@@ -182,6 +203,7 @@ function methods:GetPropertyChangedSignal(property: string)
 	return propertysignals[property]
 end
 
+local lastCacheClear = 0
 if isServer then
 	local tableInit = Instance.new("RemoteEvent")
 	local propertyUpdates = Instance.new("RemoteEvent")
@@ -193,8 +215,26 @@ if isServer then
 		for i,v in tableInitQueue do
 			tableInit:FireClient(i, v)
 		end
+
+		for i,v in propertyUpdatesQueue do
+			propertyUpdates:FireClient(i, v)
+		end
 		
 		table.clear(tableInitQueue)
+		table.clear(propertyUpdatesQueue)
+
+        lastCacheClear += dt
+        if lastCacheClear < 7 then return end
+
+        local usedCacheData = {}
+        for i,v in activeTables do
+            local metatable = getmetatable(v)
+            for i2, v2 in metatable.cacheusage do
+                usedCacheData[v2] = true
+            end
+        end
+
+		tableManager.clearCache(usedCacheData)
 	end)
 elseif isClient then
 	local tableInit: RemoteEvent = script:WaitForChild("tableInit")
