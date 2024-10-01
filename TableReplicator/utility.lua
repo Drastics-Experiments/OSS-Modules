@@ -19,6 +19,26 @@ function utility.yield()
 	end
 end
 
+function utility.manageV3orCf(input: Vector3 | CFrame | string)
+	local result;
+
+	if typeof(input) == "Vector3" then
+		result = {input.X, input.Y, input.Z}
+	elseif typeof(input) == "CFrame" then
+		result = {input:GetComponents()}
+	elseif typeof(input) == "string" then
+		if string.find(input, "vector: ") then
+		elseif string.find(input, "cframe: ") then
+		end
+	end
+
+	for i,v in result do
+		result[i] = math.floor(v / 0.01) * 0.01
+	end
+
+	return result
+end
+
 function utility.typeHandler(self, value, id: string?)
 	local metatable = getmetatable(self)
 	local whitelistedPlayers = (isServer and getmetatable(metatable.base).whitelistedPlayers) or nil

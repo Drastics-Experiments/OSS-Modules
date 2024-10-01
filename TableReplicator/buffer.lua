@@ -1,3 +1,4 @@
+--!native
 
 local http = game:GetService("HttpService")
 local compression = require(script.Parent.compress)

@@ -1,5 +1,17 @@
 --!strict
 
+--[[
+TODO:
+add support for vector3 and cframe
+add my "fake metatables" concept
+add edge case senarios incase clients dont have specific data
+
+probably get rid of string compression
+combine functions & shrink codebase
+
+optimize table manager & instance manager replication
+]]
+
 local runService = game:GetService("RunService")
 local httpService = game:GetService("HttpService")
 
@@ -72,6 +84,12 @@ local function __newindex(self: replicatedTable, index: any, value: any)
 		self:FireChanged(index, value, oldValue)
 	end
 
+	local meta = metatable.meta
+	if meta and meta.__newindex then
+		local a,b = pcall(meta.__newindex, self, index, value)
+		print(a,b) -- placeholder variables
+	end
+
 	return value
 end
 
@@ -120,28 +138,23 @@ function tableReplicator.createMetatable()
 end
 
 
-function tableReplicator.new(tableProps: {
-	Name: string,
+function tableReplicator.new(Name: string, tableProps: {
 	InitialData: { [any]: any }?,
 	PlayersToReplicate: { Player }?
-	}): replicatedTable
+	}?): replicatedTable
 	
 	utility.yield()
 	
 	if isClient then 
-		while not activeTables[tableProps.Name] do task.wait() end
-		return activeTables[tableProps.Name]
+		while not activeTables[Name] do task.wait() end
+		return activeTables[Name]
 	end
 	
 	local self: replicatedTable = tableReplicator.createMetatable()
 	local metatable: metatable = getmetatable(self)
 	
-	metatable.name = tableProps.Name
+	metatable.name = Name
 	metatable.base = self
-
-	if tableProps.PlayersToReplicate then
-		metatable.whitelistedPlayers = tableProps.PlayersToReplicate
-	end
 	
 	if tableProps.InitialData then
 		for i: any, v: any in tableProps.InitialData do
@@ -151,7 +164,7 @@ function tableReplicator.new(tableProps: {
 
 	if isServer then
 		if tableProps.PlayersToReplicate then
-			
+			metatable.whitelistedPlayers = PlayersToReplicate
 			for i,v in tableProps.PlayersToReplicate do
 				self:ReplicateTable(v)
 			end
@@ -159,9 +172,32 @@ function tableReplicator.new(tableProps: {
 	end
 	
 	tableManager.registerTable(self, metatable.id)
-	activeTables[tableProps.Name] = self
+	activeTables[Name] = self
 	
 	return self
+end
+
+function methods.ApplyMetatable(self: replicatedTable, meta: {})
+	if meta.__index then
+		warn("__index is not supported")
+		meta.__index = nil
+	end
+
+	if meta.__metatable then
+		warn("__metatable is not supported")
+		meta.__metatable = nil
+	end
+
+	local metatable = getmetatable(self)
+	metatable.meta = {}
+
+	for i,v in meta do
+		if not metatable[i] then
+			metatable[i] = v
+		else
+			metatable.meta[i] = v
+		end
+	end
 end
 
 function methods.ReplicateTable(self: replicatedTable, player: Player)
