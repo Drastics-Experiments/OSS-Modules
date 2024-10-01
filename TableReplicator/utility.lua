@@ -7,14 +7,17 @@ local utility = {}
 local instanceManager = require(script.Parent.instanceManager)
 local tableManager = require(script.Parent.tableManager)
 local tableReplicator; task.defer(function()
-	print("ran")
 	if tableReplicator == nil then
 		tableReplicator = require(script.Parent)
-		script:SetAttribute((isClient and "client_".."Loaded") or "server_".."Loaded", true)
-		print(tableReplicator)
+		utility.loaded = true
 	end
 end)
 
+function utility.yield()
+	if not utility.loaded then
+		while not utility.loaded do task.wait() end
+	end
+end
 
 function utility.typeHandler(self, value, id: string?)
 	local metatable = getmetatable(self)
@@ -34,7 +37,8 @@ function utility.typeHandler(self, value, id: string?)
 			newSelf[utility.typeHandler(self, i)] = utility.typeHandler(self, v)
 		end
 		
-		table.insert(cache, metatable.id)
+		tableManager.editCacheId(metatable.id, 1)
+		--table.insert(cache, metatable.id)
 
 		if isServer then
 			tableManager.registerTable(newSelf, newMetatable.id)
@@ -44,7 +48,8 @@ function utility.typeHandler(self, value, id: string?)
 		return newSelf
 	elseif typeof(value) == "Instance" then
 		instanceManager.registerInstance(value)
-		table.insert(cache, "instance: " .. value:GetDebugId(0))
+		instanceManager.editCacheId("instance: " .. value:GetDebugId(0), 1)
+		--table.insert(cache, "instance: " .. value:GetDebugId(0))
 		
 		if isServer then
 			instanceManager.replicateInstances(value, whitelistedPlayers)

@@ -7,6 +7,7 @@ local isServer, isClient = runService:IsServer(), runService:IsClient()
 local instanceManager = {}
 local instanceCache = {}::{[string]: Instance?}
 local clientInstanceCache = {}
+local cacheUsage = {}
 
 function instanceManager.registerInstance(instance: Instance)
 	instanceCache["instance: "..instance:GetDebugId(0)] = instance
@@ -26,23 +27,32 @@ function instanceManager.replicateInstances(instances: {Instance} | Instance, cl
 	end
 end
 
-function instanceManager.clearCache(cachedata: {[string]: boolean})
+function instanceManager.clearCache()
 	for i,v in instanceCache do
-		if not cachedata[i] then
+		if not cacheUsage[i] then
 			instanceCache[i] = nil
 		end
 	end
 
 	for i,v in clientInstanceCache do
 		for i2, v2 in v do
-			if not cachedata[i2] then
+			if not cacheUsage[i2] then
 				v[i2] = nil
 			end
 		end
 	end
 end
 
-function instanceManager.getInstanceFromId(id): Instance?
+function instanceManager.editCacheId(id: string, amount: number)
+	if not cacheUsage[id] then cacheUsage[id] = 0 end
+
+	cacheUsage[id] += amount
+	if cacheusage[id] <= 0 then
+		cacheUsage[id] = nil
+	end
+end
+
+function instanceManager.getInstanceFromId(id: string): Instance?
 	return instanceCache[id]
 end
 

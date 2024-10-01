@@ -4,10 +4,12 @@ local isClient, isServer = runService:IsClient(), runService:IsServer()
 
 local signal = require(script.Parent.signal)
 local bufferLib = require(script.Parent.buffer)
+local compression = require(script.Parent.compress)
 
 local tableManager = {}
 local tableCache = {}
 local clientCache = {}
+local cacheUsage = {}
 local replicator: RemoteEvent
 
 function tableManager.registerTable(tbl, id)
@@ -31,12 +33,33 @@ function tableManager.clearCache(cachedata: {[string]: boolean})
 	end
 end
 
+function tableManager.editCacheId(id: string, amount: number)
+	if not cacheUsage[id] then cacheUsage[id] = 0 end
+	cacheUsage[id] += amount
+	if cacheUsage[id] <= 0 then
+		cacheUsage[id] = nil
+	end
+end
+
+
 function tableManager.getIdFromTable(tbl)
-	if not tableCache[tostring(tbl)] then
-		tableManager.registerTable(tbl)
+	local meta = getmetatable(tbl)
+	local id
+
+	if meta and meta.__type == "replicatedTable" then
+		id = meta.id
+	elseif isServer then
+		id = tostring(tbl)
+	elseif isClient then
+		for i,v in tableCache do
+			if v == tbl then id = i end
+		end
 	end
 
-	return tostring(tbl)
+	return id
+end
+
+function tableManager.checkTableReplicated(id, clients)
 end
 
 function tableManager.getTableFromId(id)

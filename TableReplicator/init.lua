@@ -26,18 +26,31 @@ local function check(self: replicatedTable, value: string)
 	end
 end
 
+local function makeCacheChanges(value, change)
+	if typeof(value) == "table" then
+		tableManager.editCacheId(tableManager.getIdFromTable(value), change)
+	elseif typeof(value) == "Instance" then
+		instanceManager.editCacheId("instance: " .. value:GetDebugId(0), change)
+	end
+end
+
+local function detectCacheChanges(index, value, oldValue)
+	if typeof(value) ~= typeof(oldValue) then
+		makeCacheChanges(oldValue, -1)
+	elseif getmetatable(value) ~= getmetatable(oldValue) then
+		makeCacheChanges(oldValue, -1)
+	elseif value == nil then
+		makeCacheChanges(index, -1)
+	end
+end
+
+
 local function __newindex(self: replicatedTable, index: any, value: any)
 	local metatable: metatable = getmetatable(self)
 	local data = metatable.__index
-	local oldValue: replicatedTable = data[index]
+	local oldValue: any = data[index]
 
-	local oldMetatable: metatable = getmetatable(oldValue)
-	if oldMetatable and oldMetatable.__type == "replicatedTable" then
-		local base: replicatedTable = oldMetatable.base
-		local mainMeta: metatable = getmetatable(base)
-		local cache = mainMeta.cacheusage
-		table.remove(cache, table.find(cache, oldMetatable.id))
-	end
+	detectCacheChanges(index, value, oldValue)
 
 	data[utility.typeHandler(self, index)] = utility.typeHandler(self, value)
 	if value ~= oldValue then
@@ -78,7 +91,6 @@ type privateTable = {
 	__newindex: (self: replicatedTable, index: any, value: any) -> (),
 
 	id: string,
-	cacheusage: { string },
 	base: replicatedTable,
 	whitelistedPlayers: { Player },
 	name: string?,
@@ -95,7 +107,6 @@ function tableReplicator.createMetatable()
 		ReplicateTable = methods.ReplicateTable,
 	}:: mainTable, {
 		__index = {},
-		cacheusage = {},
 		__type = "replicatedTable",
 		__newindex = __newindex,
 		propertysignals = {},
@@ -115,7 +126,7 @@ function tableReplicator.new(tableProps: {
 	PlayersToReplicate: { Player }?
 	}): replicatedTable
 	
-	while not script.utility:GetAttribute((isClient and "client_".."Loaded") or "server_".."Loaded") do task.wait() end
+	utility.yield()
 	
 	if isClient then 
 		while not activeTables[tableProps.Name] do task.wait() end
@@ -205,17 +216,9 @@ local function clearCache(dt: number)
 	lastCacheClear += dt
 	if lastCacheClear < 7 then return end
 	lastCacheClear = 0
-	
-	local usedCacheData = {} :: { [string]: boolean }
-	for i, v: replicatedTable in activeTables do
-		local metatable: metatable = getmetatable(v)
-		for i2, v2 in metatable.cacheusage do
-			usedCacheData[v2] = true
-		end
-	end
 
-	tableManager.clearCache(usedCacheData)
-	instanceManager.clearCache(usedCacheData)
+	tableManager.clearCache()
+	instanceManager.clearCache()
 end
 
 
@@ -230,16 +233,13 @@ if isServer then
 		
 		for tbl: string, sendData in propertyUpdatesQueue do
 			local newTbl: replicatedTable = tableManager.getTableFromId(tbl)
-			local a = getmetatable(newTbl)
-			print(a)
-			local metatable: metatable = getmetatable(a.base)
+			local meta = getmetatable(newTbl)
+			local metatable: metatable = getmetatable(meta.base)
 			if metatable.whitelistedPlayers then
 				for i,v in metatable.whitelistedPlayers do
 					propertyUpdates:FireClient(v, tbl, sendData)
 				end
 			end
-
-			--
 		end
 
 		table.clear(tableInitQueue)
@@ -252,7 +252,7 @@ elseif isClient then
 	end)
 	
 	tableInit.OnClientEvent:Connect(function(sendData)
-		while not script.utility:GetAttribute((isClient and "client_".."Loaded") or "server_".."Loaded") do task.wait() end
+		utility.yield()
 		local decompressed: {
 			[number]: {
 				Name: string,
@@ -289,14 +289,6 @@ elseif isClient then
 				or i, tableManager.getTableFromId(v) 
 				or instanceManager.getInstanceFromId(v) 
 				or v
-			
-			if i2 ~= i then
-				table.insert(metatable.cacheusage, i)
-			end
-			
-			if v2 ~= v then
-				table.insert(metatable.cacheusage, v)
-			end
 			
 			tbl[i2] = v2
 		end
