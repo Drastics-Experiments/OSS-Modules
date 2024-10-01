@@ -1,16 +1,18 @@
+--!strict
+
 local runService = game:GetService("RunService")
 
 local replicator: RemoteEvent
 local isServer, isClient = runService:IsServer(), runService:IsClient()
 local instanceManager = {}
-local instanceCache = {}
+local instanceCache = {}::{[string]: Instance?}
 local clientInstanceCache = {}
 
-function instanceManager.registerInstance(instance)
+function instanceManager.registerInstance(instance: Instance)
 	instanceCache["instance: "..instance:GetDebugId(0)] = instance
 end
 
-function instanceManager.replicateInstances(instances, clients)
+function instanceManager.replicateInstances(instances: {Instance} | Instance, clients: { Player } | Player)
 	if typeof(clients) ~= "table" then clients = {clients} end
 	if typeof(instances) ~= "table" then instances = {instances} end
 
@@ -20,24 +22,32 @@ function instanceManager.replicateInstances(instances, clients)
 			if not instanceManager.getInstanceFromId("instance: "..v2:GetDebugId(0)) then instanceManager.registerInstance(v2) end
 			clientInstanceCache[v]["instance: "..v2:GetDebugId(0)] = v2
 			replicator:FireClient(v, "instance: "..v2:GetDebugId(0), v2)
-			print(v2)
 		end
 	end
 end
 
-function instanceManager.getInstanceFromId(id)
+function instanceManager.clearCache(cachedata: {[string]: boolean})
+	for i,v in instanceCache do
+		if not cachedata[i] then
+			instanceCache[i] = nil
+		end
+	end
+
+	for i,v in clientInstanceCache do
+		for i2, v2 in v do
+			if not cachedata[i2] then
+				v[i2] = nil
+			end
+		end
+	end
+end
+
+function instanceManager.getInstanceFromId(id): Instance?
 	return instanceCache[id]
 end
 
-function instanceManager.getIdFromInstance(instance)
-	local a
-	for i,v in instanceCache do
-		if v == instance then 
-			a = i
-			break
-		end
-	end
-	return a
+function instanceManager.getIdFromInstance(instance: Instance): string?
+	return "instance: " .. instance:GetDebugId(0)
 end
 
 if isServer then
@@ -47,9 +57,8 @@ elseif isClient then
 	replicator = script:WaitForChild("RemoteEvent")
 
 	replicator.OnClientEvent:Connect(function(id, instance)
-		print(id,instance)
+		if instance == nil then warn("No instance provided, make sure the client has access to the instance before adding it to a replicated table.") end
 		instanceCache[id] = instance
-		print(instanceCache)
 	end)
 end
 

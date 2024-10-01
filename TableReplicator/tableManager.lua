@@ -1,6 +1,8 @@
+
 local runService = game:GetService("RunService")
 local isClient, isServer = runService:IsClient(), runService:IsServer()
 
+local signal = require(script.Parent.signal)
 local bufferLib = require(script.Parent.buffer)
 
 local tableManager = {}
@@ -8,12 +10,12 @@ local tableCache = {}
 local clientCache = {}
 local replicator: RemoteEvent
 
-function tableManager.registerTable(tbl)
-	tableCache[tostring(tbl)] = tbl
-	print(tableCache)
+function tableManager.registerTable(tbl, id)
+	if signal.Is(tbl) then return end
+	tableCache[id or tostring(tbl)] = tbl
 end
 
-function tableManager.clearCache(cachedata)
+function tableManager.clearCache(cachedata: {[string]: boolean})
 	for i,v in tableCache do
 		if not cachedata[i] then
 			tableCache[i] = nil
@@ -33,7 +35,7 @@ function tableManager.getIdFromTable(tbl)
 	if not tableCache[tostring(tbl)] then
 		tableManager.registerTable(tbl)
 	end
-	
+
 	return tostring(tbl)
 end
 
@@ -57,6 +59,11 @@ if isServer then
 	replicator.Parent = script
 elseif isClient then
 	replicator = script:WaitForChild("tableReplication")
+	
+	replicator.OnClientEvent:Connect(function(id, tbl)
+		local decompressed = bufferLib.DecompressTable(tbl)
+		tableCache[id] = if decompressed ~= "failed" then decompressed else tbl
+	end)
 end
 
 return tableManager
