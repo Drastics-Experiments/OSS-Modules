@@ -1,10 +1,6 @@
 --!native
 
 local http = game:GetService("HttpService")
-local compression = require(script.Parent.compress)
-local compressionConfig = {
-	level = 4
-}
 local bufferLib = {}
 
 local function checkIfCanCompress(tbl)
@@ -22,14 +18,11 @@ local function checkIfCanCompress(tbl)
 end
 
 function bufferLib.CompressTable(tbl)
+	if typeof(tbl) ~= "table" then return "failed" end
 	if checkIfCanCompress(tbl) then
 		local stringify = http:JSONEncode(tbl)
-
-		if compressionConfig.level > 0 then
-			stringify = compression.ZLib.Compress(stringify, compressionConfig)
-		end
-
 		local buffered = buffer.fromstring(stringify)
+		
 		return buffered
 	end
 
@@ -39,11 +32,6 @@ end
 function bufferLib.DecompressTable(bfr)
 	if typeof(bfr) == "buffer" then
 		bfr = buffer.tostring(bfr)
-		
-		if compressionConfig.level > 0 then
-			bfr = compression.ZLib.Decompress(bfr, compressionConfig)
-		end
-
 		return http:JSONDecode(bfr)
 	end
 

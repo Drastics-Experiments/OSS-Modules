@@ -2,6 +2,8 @@
 
 local runService = game:GetService("RunService")
 
+local generateID = require(script.idGenerator)
+
 local replicator: RemoteEvent
 local isServer, isClient = runService:IsServer(), runService:IsClient()
 local instanceManager = {}
@@ -10,35 +12,40 @@ local clientInstanceCache = {}
 local cacheUsage = {}
 
 function instanceManager.registerInstance(instance: Instance)
-	instanceCache["instance: "..instance:GetDebugId(0)] = instance
+	if isServer then
+		instanceCache["instance: "..generateID()] = instance
+	end
 end
 
-function instanceManager.replicateInstances(instances: {Instance} | Instance, clients: { Player } | Player)
+function instanceManager.debug()
+	print(instanceCache)
+	print(cacheUsage)
+end
+
+function instanceManager.replicateInstances(instances: {Instance}, clients: { Player })
 	if typeof(clients) ~= "table" then clients = {clients} end
 	if typeof(instances) ~= "table" then instances = {instances} end
 
 	for i,v in clients do
 		if not clientInstanceCache[v] then clientInstanceCache[v] = {} end
 		for i2, v2 in instances do
-			if not instanceManager.getInstanceFromId("instance: "..v2:GetDebugId(0)) then instanceManager.registerInstance(v2) end
-			clientInstanceCache[v]["instance: "..v2:GetDebugId(0)] = v2
-			replicator:FireClient(v, "instance: "..v2:GetDebugId(0), v2)
+			local id = instanceManager.getIdFromInstance(v2)
+			if not id then instanceManager.registerInstance(v2) id = instanceManager.getIdFromInstance(v2) end
+			clientInstanceCache[v][id] = v2
+			replicator:FireClient(v, id, v2)
 		end
 	end
 end
 
 function instanceManager.clearCache()
 	for i,v in instanceCache do
-		if not cacheUsage[i] then
-			instanceCache[i] = nil
-		end
+		if cacheUsage[i] then continue end
+		instanceCache[i] = nil
 	end
 
-	for i,v in clientInstanceCache do
-		for i2, v2 in v do
-			if not cacheUsage[i2] then
-				v[i2] = nil
-			end
+	for plr, tbl in clientInstanceCache do
+		for id, _ in tbl do
+			if not cacheUsage[id] then tbl[id] = nil end
 		end
 	end
 end
@@ -47,7 +54,7 @@ function instanceManager.editCacheId(id: string, amount: number)
 	if not cacheUsage[id] then cacheUsage[id] = 0 end
 
 	cacheUsage[id] += amount
-	if cacheusage[id] <= 0 then
+	if cacheUsage[id] <= 0 then
 		cacheUsage[id] = nil
 	end
 end
@@ -57,7 +64,11 @@ function instanceManager.getInstanceFromId(id: string): Instance?
 end
 
 function instanceManager.getIdFromInstance(instance: Instance): string?
-	return "instance: " .. instance:GetDebugId(0)
+	for i,v in instanceCache do
+		if v == instance then
+			return i
+		end
+	end
 end
 
 if isServer then

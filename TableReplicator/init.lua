@@ -1,17 +1,5 @@
 --!strict
 
---[[
-TODO:
-add support for vector3 and cframe
-add my "fake metatables" concept
-add edge case senarios incase clients dont have specific data
-
-probably get rid of string compression
-combine functions & shrink codebase
-
-optimize table manager & instance manager replication
-]]
-
 local runService = game:GetService("RunService")
 local httpService = game:GetService("HttpService")
 
@@ -23,75 +11,12 @@ local signal = require(script.signal)
 local bufferLib = require(script.buffer)
 local utility = require(script.utility)
 
-local tableInitQueue, propertyUpdatesQueue = {} :: { [Player]: { any } }, {}:: { [string]: { [any]: any } }
 local activeTables = {}:: { [string]: replicatedTable }
 local tableReplicator = {}
 local methods = {}
 
-local function check(self: replicatedTable, value: string)
-	if type(value) ~= "string" then return end
-	local metatable: metatable = getmetatable(getmetatable(self).base)
-	if string.find(value, "table: ") then
-		tableManager.replicateTable(tableManager.getTableFromId(value), metatable.whitelistedPlayers)
-	elseif string.find(value, "instance: ") then
-		instanceManager.replicateInstances(instanceManager.getInstanceFromId(value), metatable.whitelistedPlayers)
-	end
-end
-
-local function makeCacheChanges(value, change)
-	if typeof(value) == "table" then
-		tableManager.editCacheId(tableManager.getIdFromTable(value), change)
-	elseif typeof(value) == "Instance" then
-		instanceManager.editCacheId("instance: " .. value:GetDebugId(0), change)
-	end
-end
-
-local function detectCacheChanges(index, value, oldValue)
-	if typeof(value) ~= typeof(oldValue) then
-		makeCacheChanges(oldValue, -1)
-	elseif getmetatable(value) ~= getmetatable(oldValue) then
-		makeCacheChanges(oldValue, -1)
-	elseif value == nil then
-		makeCacheChanges(index, -1)
-	end
-end
-
-
-local function __newindex(self: replicatedTable, index: any, value: any)
-	local metatable: metatable = getmetatable(self)
-	local data = metatable.__index
-	local oldValue: any = data[index]
-
-	detectCacheChanges(index, value, oldValue)
-
-	data[utility.typeHandler(self, index)] = utility.typeHandler(self, value)
-	if value ~= oldValue then
-		if isServer then	
-			if not propertyUpdatesQueue[metatable.id] then	
-				propertyUpdatesQueue[metatable.id] = {}
-			end
-
-			local currentQueue = propertyUpdatesQueue[metatable.id]
-			
-			local i,v = utility.copy(index, true), utility.copy(value, true)
-			
-			check(self, i)
-			check(self, v)
-			
-			currentQueue[i] = v
-		end
-
-		self:FireChanged(index, value, oldValue)
-	end
-
-	local meta = metatable.meta
-	if meta and meta.__newindex then
-		local a,b = pcall(meta.__newindex, self, index, value)
-		print(a,b) -- placeholder variables
-	end
-
-	return value
-end
+local tableInit: RemoteEvent = script.tableInit
+local propertyUpdates: RemoteEvent = script.propertyUpdate
 
 type mainTable = {
 	Changed: signal.Signal<any>,
@@ -99,6 +24,7 @@ type mainTable = {
 	FireChanged: (self: replicatedTable, index: unknown, value: unknown, oldValue: unknown) -> (),
 	GetRawTable: (self: replicatedTable, networkify: boolean) -> ({}),
 	ReplicateTable: (self: replicatedTable, player: Player) -> (),
+	ApplyMetatable: (self: replicatedTable, meta: {[string]: any}) -> (),
 }
 
 type privateTable = {
@@ -107,13 +33,115 @@ type privateTable = {
 	},
 	__type: "replicatedTable",
 	__newindex: (self: replicatedTable, index: any, value: any) -> (),
+	__len: (self: replicatedTable) -> (number),
 
+	meta: { [string]: any },
 	id: string,
 	base: replicatedTable,
 	whitelistedPlayers: { Player },
 	name: string?,
-	propertysignals: {[string]: signal.Signal<...any>}
+	propertysignals: { [string]: signal.Signal<any> }
 }
+
+type propertyUpdate = {
+	id: string,
+	i: any,
+	v: any
+}
+
+export type module = {
+	new: (props: {
+		Name: string,
+		InitialData: { [any]: any }?,
+		PlayersToReplicate: { Player }?
+	}) -> (replicatedTable),
+	createMetatable: () -> (replicatedTable),
+}
+
+local function makeCacheChanges(value, change)
+	if typeof(value) == "table" then
+		tableManager.editCacheId(tableManager.getIdFromTable(value), change)
+	elseif typeof(value) == "Instance" then
+		local result = instanceManager.getIdFromInstance(value)
+		
+		if result then
+			instanceManager.editCacheId(result, change)
+		end
+	end
+end
+
+local function check(self: replicatedTable, value: string)
+	if type(value) ~= "string" then return end
+	local metatable: metatable = getmetatable(getmetatable(self).base)
+	if string.find(value, "table: ") then
+		tableManager.replicateTable(tableManager.getTableFromId(value), metatable.whitelistedPlayers)
+	elseif string.find(value, "instance: ") then
+		local result = instanceManager.getInstanceFromId(value)
+		
+		if result then
+			instanceManager.replicateInstances(result, metatable.whitelistedPlayers)
+		end
+	end
+end
+
+local function __newindex(self: replicatedTable, index: any, value: any)
+	local metatable: metatable = getmetatable(self)
+	local data = metatable.__index
+	local oldValue: any = data[index]
+
+	if typeof(value) ~= typeof(oldValue) or getmetatable(value) ~= getmetatable(oldValue) then makeCacheChanges(oldValue, -1) end
+	if value == nil then makeCacheChanges(index, -1) end
+	if not data[index] then index = utility.typeHandler(self, index) end
+
+	value = utility.typeHandler(self, value)
+	data[index] = if value ~= "__EMPTY" then value else nil
+	
+	if value ~= oldValue then
+		if isServer then
+			local meta = getmetatable(metatable.base)
+			local whitelistedPlayers = meta.whitelistedPlayers
+			local i,v = utility.copy(index, true), utility.copy(value, true)
+
+			check(self, i)
+			check(self, v)
+			
+			if whitelistedPlayers then
+				for _, plr in whitelistedPlayers do
+					propertyUpdates:FireClient(plr, bufferLib.CompressTable({
+						id = metatable.id,
+						i = i,
+						v = v
+					}))
+				end
+			end
+		end
+
+		self:FireChanged(index, data[index], oldValue)
+	end
+
+	local meta = metatable.meta
+	if meta and meta.__newindex then
+		local success, err = pcall(meta.__newindex, self, index, value)
+		if not success then
+			warn(err)
+		end
+	end
+
+	return value
+end
+
+local function __len(self)
+	-- supports dictionaries and not only arrays
+	
+	local meta = getmetatable(self)
+	local num = 0
+	
+	for i,v in meta.__index do
+		num += 1
+	end
+	
+	return num
+end
 
 function tableReplicator.createMetatable()
 	local self: replicatedTable
@@ -123,12 +151,15 @@ function tableReplicator.createMetatable()
 		FireChanged = methods.FireChanged,
 		GetRawTable = methods.GetRawTable,
 		ReplicateTable = methods.ReplicateTable,
+		ApplyMetatable = methods.ApplyMetatable
 	}:: mainTable, {
 		__index = {},
 		__type = "replicatedTable",
 		__newindex = __newindex,
+		__len = __len,
 		propertysignals = {},
 		id = "",
+		meta = {},
 	} :: privateTable)
 
 	local metatable = getmetatable(self)
@@ -139,23 +170,23 @@ end
 
 
 function tableReplicator.new(Name: string, tableProps: {
-	InitialData: { [any]: any }?,
-	PlayersToReplicate: { Player }?
-	}?): replicatedTable
-	
+		InitialData: { [any]: any },
+		PlayersToReplicate: { Player }
+	}): replicatedTable
+
 	utility.yield()
-	
+
 	if isClient then 
 		while not activeTables[Name] do task.wait() end
 		return activeTables[Name]
 	end
-	
+
 	local self: replicatedTable = tableReplicator.createMetatable()
 	local metatable: metatable = getmetatable(self)
-	
+
 	metatable.name = Name
 	metatable.base = self
-	
+
 	if tableProps.InitialData then
 		for i: any, v: any in tableProps.InitialData do
 			self[i] = v
@@ -164,20 +195,21 @@ function tableReplicator.new(Name: string, tableProps: {
 
 	if isServer then
 		if tableProps.PlayersToReplicate then
-			metatable.whitelistedPlayers = PlayersToReplicate
+			metatable.whitelistedPlayers = tableProps.PlayersToReplicate
 			for i,v in tableProps.PlayersToReplicate do
 				self:ReplicateTable(v)
 			end
 		end
 	end
-	
+
 	tableManager.registerTable(self, metatable.id)
+	tableManager.editCacheId(metatable.id, 1)
 	activeTables[Name] = self
-	
+
 	return self
 end
 
-function methods.ApplyMetatable(self: replicatedTable, meta: {})
+function methods.ApplyMetatable(self: replicatedTable, meta: { [string]: any })
 	if meta.__index then
 		warn("__index is not supported")
 		meta.__index = nil
@@ -188,10 +220,11 @@ function methods.ApplyMetatable(self: replicatedTable, meta: {})
 		meta.__metatable = nil
 	end
 
-	local metatable = getmetatable(self)
-	metatable.meta = {}
-
-	for i,v in meta do
+	local metatable: metatable = getmetatable(self)
+	local typeErrorBypass = {} :: { [string]: any }
+	metatable.meta = typeErrorBypass
+	
+	for i: string, v: any in meta do
 		if not metatable[i] then
 			metatable[i] = v
 		else
@@ -202,16 +235,13 @@ end
 
 function methods.ReplicateTable(self: replicatedTable, player: Player)
 	local networkable = self:GetRawTable(true)
-
-	if not tableInitQueue[player] then
-		tableInitQueue[player] = {}
-	end
-
-	table.insert(tableInitQueue[player], {
-		Name = getmetatable(self).name,
-		Id = getmetatable(self).id,
+	local meta = getmetatable(self)
+		
+	tableInit:FireClient(player, bufferLib.CompressTable({
+		Name = meta.name,
+		Id = meta.id,
 		Data = networkable
-	})
+	}))
 end
 
 
@@ -227,13 +257,11 @@ function methods.GetRawTable(self: replicatedTable, networkify)
 end
 
 function methods.FireChanged(self: replicatedTable, index: unknown, value: unknown, oldValue: unknown)
-	local metatable = getmetatable(self)
+	local metatable: metatable = getmetatable(self)
 	local propertysignals = metatable.propertysignals
 
 	self.Changed:Fire(index,value,oldValue)
-	if propertysignals[index] then
-		propertysignals[index]:Fire(value, oldValue)
-	end
+	if propertysignals[index] then propertysignals[index]:Fire(value, oldValue) end
 end
 
 function methods.GetPropertyChangedSignal(self: replicatedTable, property: string)
@@ -250,96 +278,62 @@ end
 local lastCacheClear = 0
 local function clearCache(dt: number)
 	lastCacheClear += dt
-	if lastCacheClear < 7 then return end
-	lastCacheClear = 0
+	
+	if lastCacheClear > 7 then
+		lastCacheClear = 0
 
-	tableManager.clearCache()
-	instanceManager.clearCache()
+		tableManager.clearCache()
+		instanceManager.clearCache()
+	end
 end
 
+runService.Heartbeat:Connect(clearCache)
 
-local tableInit: RemoteEvent = script.tableInit
-local propertyUpdates: RemoteEvent = script.propertyUpdate
-
-if isServer then
-	runService.Heartbeat:Connect(function(dt: number)
-		for player: Player, sendData in tableInitQueue do
-			tableInit:FireClient(player, bufferLib.CompressTable(sendData))
-		end
-		
-		for tbl: string, sendData in propertyUpdatesQueue do
-			local newTbl: replicatedTable = tableManager.getTableFromId(tbl)
-			local meta = getmetatable(newTbl)
-			local metatable: metatable = getmetatable(meta.base)
-			if metatable.whitelistedPlayers then
-				for i,v in metatable.whitelistedPlayers do
-					propertyUpdates:FireClient(v, tbl, sendData)
-				end
-			end
-		end
-
-		table.clear(tableInitQueue)
-		table.clear(propertyUpdatesQueue)
-		clearCache(dt)
-	end)
-elseif isClient then
-	runService.Heartbeat:Connect(function(dt)
-		clearCache(dt)
-	end)
-	
+if isClient then
 	tableInit.OnClientEvent:Connect(function(sendData)
 		utility.yield()
 		local decompressed: {
-			[number]: {
-				Name: string,
-				Id: string,
-				Data: {any}
-			}
+			Name: string,
+			Id: string,
+			Data: {any}
 		} = bufferLib.DecompressTable(sendData)
-		
-		for _, data in decompressed do
-			local self = tableReplicator.createMetatable()
-			local metatable = getmetatable(self)
-			metatable.base = self
-			metatable.name = data.Name
-			
-			local result = utility.typeHandler(self, data.Data)
-			tableManager.registerTable(self, data.Id)
-			activeTables[data.Name] = self
-			
-			for i,v in result do
-				self[i] = v
-			end
-		end
 
+		local self = tableReplicator.createMetatable()
+		local metatable = getmetatable(self)
+		metatable.base = self
+		metatable.name = decompressed.Name
+
+		local result = utility.typeHandler(self, decompressed.Data)
+		tableManager.registerTable(self, decompressed.Id)
+		tableManager.editCacheId(decompressed.Id, 1)
+		activeTables[decompressed.Name] = self
+
+		for i,v in result do
+			self[i] = v
+		end
 	end)
-	
-	propertyUpdates.OnClientEvent:Connect(function(id, changes)
+
+	propertyUpdates.OnClientEvent:Connect(function(data)
+		local data: propertyUpdate = bufferLib.DecompressTable(data)
+		local id = data.id
+		local i,v = data.i, data.v
+		
 		while not tableManager.getTableFromId(id) do warn("No Table Found " .. id) task.wait(1) end
 		local tbl: replicatedTable = tableManager.getTableFromId(id)
 		local metatable: metatable = getmetatable(tbl)
+				
+		local i2, v2 = tableManager.getTableFromId(i) 
+			or instanceManager.getInstanceFromId(i) 
+			or i, tableManager.getTableFromId(v)
+			or instanceManager.getInstanceFromId(v) 
+			or (v ~= "__EMPTY" and v)
+			or nil
 		
-		for i,v in changes do
-			local i2, v2 = tableManager.getTableFromId(i) 
-				or instanceManager.getInstanceFromId(i) 
-				or i, tableManager.getTableFromId(v) 
-				or instanceManager.getInstanceFromId(v) 
-				or v
-			
-			tbl[i2] = v2
-		end
+		tbl[i2] = v2
 	end)
 end
 
 export type replicatedTable = typeof(tableReplicator.createMetatable(table.unpack(...)))
 export type metatable = typeof(getmetatable(tableReplicator.new(table.unpack(...))))
-export type module = {
-	new: (props: {
-		Name: string,
-		InitialData: { [any]: any }?,
-		PlayersToReplicate: { Player }?
-	}) -> (replicatedTable),
-	createMetatable: () -> (replicatedTable),
-}
 
 return tableReplicator

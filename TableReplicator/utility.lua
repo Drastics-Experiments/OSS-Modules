@@ -13,6 +13,14 @@ local tableReplicator; task.defer(function()
 	end
 end)
 
+local function json(input)
+	if typeof(input) == "table" then
+		return httpService:JSONEncode(input)
+	else
+		return httpService:JSONDecode(input)
+	end
+end
+
 function utility.yield()
 	if not utility.loaded then
 		while not utility.loaded do task.wait() end
@@ -23,17 +31,19 @@ function utility.manageV3orCf(input: Vector3 | CFrame | string)
 	local result;
 
 	if typeof(input) == "Vector3" then
-		result = {input.X, input.Y, input.Z}
+		result = "vector3: "
+		result = result .. json({input.X, input.Y, input.Z})
 	elseif typeof(input) == "CFrame" then
-		result = {input:GetComponents()}
+		result = "cframe: "
+		result = result .. json({input:GetComponents()})
 	elseif typeof(input) == "string" then
-		if string.find(input, "vector: ") then
+		if string.find(input, "vector3: ") then
+			local sub = string.gsub(input, "vector3: ", "")
+			result = Vector3.new(table.unpack(json(sub)))
 		elseif string.find(input, "cframe: ") then
+			local sub = string.gsub(input, "cframe: ", "")
+			result = CFrame.new(table.unpack(json(sub)))
 		end
-	end
-
-	for i,v in result do
-		result[i] = math.floor(v / 0.01) * 0.01
 	end
 
 	return result
@@ -56,9 +66,8 @@ function utility.typeHandler(self, value, id: string?)
 		for i,v in value do
 			newSelf[utility.typeHandler(self, i)] = utility.typeHandler(self, v)
 		end
-		
+
 		tableManager.editCacheId(metatable.id, 1)
-		--table.insert(cache, metatable.id)
 
 		if isServer then
 			tableManager.registerTable(newSelf, newMetatable.id)
@@ -68,22 +77,25 @@ function utility.typeHandler(self, value, id: string?)
 		return newSelf
 	elseif typeof(value) == "Instance" then
 		instanceManager.registerInstance(value)
-		instanceManager.editCacheId("instance: " .. value:GetDebugId(0), 1)
-		--table.insert(cache, "instance: " .. value:GetDebugId(0))
-		
-		if isServer then
-			instanceManager.replicateInstances(value, whitelistedPlayers)
-		end
-		
+		instanceManager.editCacheId(instanceManager.getIdFromInstance(value), 1)
+
+		if isServer then instanceManager.replicateInstances(value, whitelistedPlayers) end
+
 		return value
+	elseif typeof(value) == "CFrame" or typeof(value) == "Vector3" then
+		return utility.manageV3orCf(value)
 	elseif typeof(value) == "buffer" then
 		value = httpService:JSONDecode(buffer.tostring(value))
 
 		return utility.typeHandler(self, value)
 	elseif type(value) == "string" then
 		return tableManager.getTableFromId(value) 
-			or instanceManager.getInstanceFromId(value) 
-			or value
+			or instanceManager.getInstanceFromId(value)
+			or utility.manageV3orCf(value)
+			or (value ~= "__EMPTY" and value)
+			or nil
+	elseif typeof(value) == "nil" then
+		return "__EMPTY" -- needed so the property updates table doesnt get garbage collected
 	end
 
 	return value
