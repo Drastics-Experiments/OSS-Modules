@@ -26,7 +26,7 @@ function tweenLibrary.TweenInfo(
 	time: number, 
 	easingStyle: Enum.EasingStyle?, 
 	easingDirection: Enum.EasingDirection?, 
-	looped: boolean?, 
+	repeatAmounts: number?, 
 	reverse: boolean?, 
 	delay: number?
 )
@@ -34,91 +34,89 @@ function tweenLibrary.TweenInfo(
 		Time = time,
 		EasingStyle = easingStyle or Enum.EasingStyle.Sine,
 		EasingDirection = easingDirection or Enum.EasingDirection.Out,
-		Looped = looped or false,
+		RepeatAmounts = repeatAmounts or 0,
 		Reverse = reverse or false,
 		delay = delay or 0,
-	} end
-
-function tweenLibrary.Create()
+	} 
 end
 
-local customMethods = {}
-customMethods.__index = customMethods
-function tweenLibrary.CreateCustom(oldValue, newValue, tweenInfo)
+local methods = {}
+methods.__index = customMethods
+function tweenLibrary.Create(oldValue, newValue, tweenInfo)
 	assert(typeof(oldValue) == typeof(newValue), "what are you doing")
 	local t = typeof(oldValue)
 	local funcs = tweenableTypes[t]
-	print(tweenInfo)
+
 	local self = {
-		lerpAlpha = 0,
 		oldValue = funcs.deconstruct(nil,oldValue),
 		newValue = funcs.deconstruct(nil,newValue),
 		tweenInfo = tweenInfo,
-		currentValue = {},
 		tweenId = httpService:GenerateGUID(false),
 		deconstruct = funcs.deconstruct,
 		reconstruct = funcs.reconstruct,
 		equation = easings[tweenInfo.EasingStyle][tweenInfo.EasingDirection],
 		lifetime = 0,
-		
-		Play = Play,
-		Pause = Pause,
+		loopTimes = tweenInfo.RepeatAmounts,
 		
 		Completed = signal.new(),
-		Cancelled = signal.new(),
-		Resumed = signal.new(),
-		Paused = signal.new()
 	}
 
-	setmetatable(self, customMethods)
+	setmetatable(self, methods)
 	return self
 end
 
-function customMethods:OnUpdate(fn)
+function methods:OnUpdate(fn)
 	self.OnSteppedReciever = fn
 end
 
-function customMethods:_stepTween(dt)
+local function stepTween(self, dt)
 	local tweenInfo = self.tweenInfo
-	self.lifetime += dt
-	self.lerpAlpha = self.equation(self.lifetime / self.tweenInfo.Time)
+	self.lifetime += (tweenInfo.isReversing and -dt) or dt
+
+	local normalizedTime = self.lifetime / tweenInfo.Time
+	local lerpAlpha = self.equation(normalizedTime)
 	
+	local currentValue = {}
 	for i,v in self.oldValue do
-		self.currentValue[i] = lerp(v, self.newValue[i], self.lerpAlpha)
+		currentValue[i] = lerp(v, self.newValue[i], lerpAlpha)
 	end
 	
 	if self.OnSteppedReciever then
-		task.spawn(self.OnSteppedReciever, self:reconstruct(self.currentValue))
+		task.spawn(self.OnSteppedReciever, self:reconstruct(currentValue))
 	end
 	
-	if self.lifetime >= self.tweenInfo.Time then
-		if self.looped then
-			self:Cancel()
-			self:Play()
-		else
-			self:Pause()
-			self.Completed:Fire()
+	if self.isReversing then
+		if normalizedTime <= 0 then
+			self.loopTimes -= 1
+			self.isReversing = false
+			if self.loopTimes == -1 then
+				self:Stop()
+				self.Completed:Fire()
+			end
+		end
+	else
+		if normalizedTime >= 1 then
+			if tweenInfo.Reverse then
+				self.isReversing = true
+			elseif self.loopTimes == -1 then
+				self:Stop()
+				self.Completed:Fire()
+			else
+				self.lifetime = 0
+			end
 		end
 	end
 end
-
-function Play(self)
-	if self.lerpAlpha > 0 then
-		self.Resumed:Fire()
-	end
-
+.
+function methods:Play(self)
 	activeTweens[self.tweenId] = self
 end
 
-function Pause(self)
+function methods:Pause(self)
 	activeTweens[self.tweenId] = nil
-
-	if self.lerpAlpha < 1 then
-		self.Paused:Fire()
-	end
 end
 
-function Cancel(self)
+function methods:Cancel(self)
 	self:Pause()
 	self.lerpAlpha = 0
 	task.spawn(self.OnSteppedReciever, self:reconstruct(self.oldValue))
@@ -126,7 +124,7 @@ end
 
 game:GetService("RunService").Heartbeat:Connect(function(dt)
 	for i,v in activeTweens do
-		v:_stepTween(dt)
+		stepTween(v, dt)
 	end
 end)
 

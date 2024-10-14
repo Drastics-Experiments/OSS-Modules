@@ -87,7 +87,7 @@ end
 local function __newindex(self: replicatedTable, index: any, value: any)
 	local metatable: metatable = getmetatable(self)
 	local data = metatable.__index
-	local oldValue: any = data[index]
+	local oldValue: any = data[index] 
 
 	if typeof(value) ~= typeof(oldValue) or getmetatable(value) ~= getmetatable(oldValue) then makeCacheChanges(oldValue, -1) end
 	if value == nil then makeCacheChanges(index, -1) end
