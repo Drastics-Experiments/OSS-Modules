@@ -1,8 +1,5 @@
 --!native
 
-
-
-local tweenService = game:GetService("TweenService")
 local httpService = game:GetService("HttpService")
 local runService = game:GetService("RunService")
 
@@ -13,32 +10,36 @@ local function lerp(min: number, max: number, alpha: number): number
 	return min + ((max - min) * alpha)
 end
 
-local tweenLibrary = setmetatable({}, {
+local tweenLibrary = setmetatable({
+	activeTweens = {},
+	SimulationEnabled = true
+}, {
 	__index = game:GetService("TweenService")
 }) :: TweenService & {
+	activeTweens: {[string]: customTween},
+	SimulationEnabled: boolean, 
+	
+	StepTweens: (self, dt: number): (),
 	Custom: <A, B>(self, oldValue: A, newValue: B, tweenInfo: TweenInfo) -> (customTween)
 }
 
-
-
-local activeTweens = {}
 local tweenableTypes = {
-	--CFrame = require(script.CFrame),
-	--ColorSequence = require(script.ColorSequence),
+	CFrame = require(script.CFrame),
+	ColorSequence = require(script.ColorSequence),
 	number = require(script.Types.Number),
 	NumberSequence = require(script.Types.NumberSequence),
-	--Vector3 = require(script.Vectors).Vector3,
-	--Vector2 = require(script.Vectors).Vector2,
+	Vector3 = require(script.Vectors).Vector3,
+	Vector2 = require(script.Vectors).Vector2,
 }
 
-local methods = {}
-methods.__index = methods
+local tweenClass = {}
+tweenClass.__index = tweenClass
 
 function tweenLibrary:Custom(oldValue, newValue, tweenInfo): customTween
 	assert(typeof(oldValue) == typeof(newValue), "what are you doing")
 	local funcs = tweenableTypes[typeof(oldValue)]
 
-	local self = {
+	local object = {
 		oldValue = funcs.deconstruct(nil,oldValue),
 		newValue = funcs.deconstruct(nil,newValue),
 		tweenInfo = tweenInfo,
@@ -52,11 +53,10 @@ function tweenLibrary:Custom(oldValue, newValue, tweenInfo): customTween
 		Completed = signal.new(),
 	}
 
-	setmetatable(self, methods)
-	return self
+	return setmetatable(object, tweenClass)
 end
 
-function methods:OnUpdate(fn)
+function tweenClass:OnUpdate(fn)
 	self.OnSteppedReciever = fn
 end
 
@@ -107,25 +107,30 @@ local function stepTween(self, dt)
 	end
 end
 
-function methods:Play()
-	activeTweens[self.tweenId] = self
+function tweenLibrary:StepTweens(dt)
+	if not self.SimulationEnabled then return end
+	for i,v in self.activeTweens do
+		stepTween(v, dt)
+	end
 end
 
-function methods:Pause()
-	activeTweens[self.tweenId] = nil
+function tweenClass:Play()
+	tweenLibrary.activeTweens[self.tweenId] = self
 end
 
-function methods:Cancel()
+function tweenClass:Pause()
+	tweenLibrary.activeTweens[self.tweenId] = nil
+end
+
+function tweenClass:Cancel()
 	self:Pause()
 	self.lifetime = 0
 	self.loopTimes = self.tweenInfo.RepeatAmounts
 	task.spawn(self.OnSteppedReciever, self:reconstruct(self.oldValue))
 end
 
-game:GetService("RunService").Heartbeat:Connect(function(dt)
-	for i,v in activeTweens do
-		stepTween(v, dt)
-	end
+runService.Heartbeat:Connect(function(dt)
+	tweenLibrary:StepTweens(dt)
 end)
 
 export type customTween = typeof(tweenLibrary:Custom(table.unpack(...)))

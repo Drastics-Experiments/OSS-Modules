@@ -1,7 +1,18 @@
 --!native
 
+-- https://nicmulvaney.com/easing
+
 local style = Enum.EasingStyle
 local direction = Enum.EasingDirection
+
+local c1 = 1.70158
+local c2 = c1 * 1.525
+local c3 = c1 + 1
+local c4 = (2 * math.pi) / 3
+local c5 = (2 * math.pi) / 4.5
+ 
+local n1 = 7.5625
+local d1 = 2.75
 
 return {
 	[style.Sine] = {
@@ -34,7 +45,7 @@ return {
 	
 	[style.Cubic] = {
 		[direction.In] = function(x)
-			return x * x * x
+			return math.pow(x, 3)
 		end,
 		
 		[direction.Out] = function(x)
@@ -42,13 +53,13 @@ return {
 		end,
 		
 		[direction.InOut] = function(x)
-			return x < 0.5 and 2 * x * x * x or 1 - math.pow(-2 * x + 2, 3) / 2
+			return x < 0.5 and 2 * math.pow(x, 3) or 1 - math.pow(-2 * x + 2, 3) / 2
 		end,
 	},
 	
 	[style.Quart] = {
 		[direction.In] = function(x)
-			return x * x * x * x
+			return math.pow(x, 4)
 		end,
 
 		[direction.Out] = function(x)
@@ -56,13 +67,13 @@ return {
 		end,
 
 		[direction.InOut] = function(x)
-			return (x < 0.5 and 8 * x * x * x * x) or 1 - math.pow(-2 * x + 2, 4) / 2
+			return (x < 0.5 and 8 * math.pow(x, 4)) or 1 - math.pow(-2 * x + 2, 4) / 2
 		end,
 	},
 	
 	[style.Quint] = {
 		[direction.In] = function(x)
-			return x * x * x * x * x
+			return math.pow(x, 5)
 		end,
 
 		[direction.Out] = function(x)
@@ -70,7 +81,7 @@ return {
 		end,
 
 		[direction.InOut] = function(x)
-			return (x < 0.5 and 16 * x * x * x * x * x) or 1 - math.pow(-2 * x + 2, 5) / 2
+			return (x < 0.5 and 16 * math.pow(x, 5)) or 1 - math.pow(-2 * x + 2, 5) / 2
 		end,
 	},
 	[style.Exponential] = {
@@ -105,43 +116,34 @@ return {
 	},
 	[style.Back] = {
 		[direction.In] = function(x)
-			local c1 = 1.70158
-			local c3 = c1 + 1
-			return c3 * x * x * x - c1 * x * x
+			return c3 * math.pow(x, 3) - c1 * math.pow(x, 2)
 		end,
 
 		[direction.Out] = function(x)
-			local c1 = 1.70158
-			local c3 = c1 + 1
 			return 1 + c3 * math.pow(x - 1, 3) + c1 * math.pow(x - 1, 2)
 		end,
 
 		[direction.InOut] = function(x)
-			local c1 = 1.70158
-			local c2 = c1 * 1.525
 			return x < 0.5 and (math.pow(2 * x, 2) * ((c2 + 1) * 2 * x - c2)) / 2
 			or (math.pow(2 * x - 2, 2) * ((c2 + 1) * (x * 2 - 2) + c2) + 2) / 2
 		end,
 	},
 	[style.Elastic] = {
 		[direction.In] = function(x)
-			local c4 = (2 * math.pi) / 3
 			return x == 0 and 0
 				or x == 1 and 1
 				or -math.pow(2, 10 * x - 10) * math.sin((x * 10 - 10.75) * c4)
 		end,
 
 		[direction.Out] = function(x)
-			local c4 = (2 * Math.PI) / 3
 			return x == 0 and 0 
 			or x == 1 and 1 or math.pow(2, -10 * x) * math.sin((x * 10 - 0.75) * c4) + 1
 		end,
 
 		[direction.InOut] = function(x)
-			local c5 = (2 * math.PI) / 4.5
 			return x == 0 and 0
 			or x == 1 and 1
-			or x < 0.5 and -(math.pow(2, 20 * x - 10) * Math.sin((20 * x - 11.125) * c5)) / 2
+			or x < 0.5 and -(math.pow(2, 20 * x - 10) * math.sin((20 * x - 11.125) * c5)) / 2
 			or (math.pow(2, -20 * x + 10) * math.sin((20 * x - 11.125) * c5)) / 2 + 1
 		end,
 	},
@@ -152,8 +154,6 @@ return {
 		end,
 
 		[direction.Out] = function(x)
-			local n1 = 7.5625
-			local d1 = 2.75
 			if (x < 1 / d1) then
 				return n1 * x * x
 			elseif (x < 2 / d1) then

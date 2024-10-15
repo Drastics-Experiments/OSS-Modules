@@ -6,7 +6,8 @@ function sequence.deconstruct(self, num: NumberSequence)
 	local tbl = {}
 	for i = 1, #num.Keypoints do
 		local point = num.Keypoints[i]
-		tbl[point.Time] = point.Value
+		table.insert(tbl, point.Value)
+		table.insert(tbl, point.Time)
 	end
 	return tbl
 end
@@ -14,19 +15,8 @@ end
 function sequence.reconstruct(self, points)
 	local tbl = {}
 	
-	local points2 = {}
-	
-	for i,v in points do
-		table.insert(points2, i)
-	end
-
-	table.sort(points2, function(a,b)
-		return a<b
-	end)
-	
-	for i,v in ipairs(points2) do
-		local p = points[v]
-		table.insert(tbl, NumberSequenceKeypoint.new(v, p))
+	for i = 2, #points, 2 do
+		table.insert(tbl, NumberSequenceKeypoint.new(points[i]), points[i - 1])
 	end
 	
 	return NumberSequence.new(tbl)
