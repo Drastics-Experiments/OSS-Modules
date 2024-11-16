@@ -1,3 +1,5 @@
+-- Old version of module, current version is no longer public.
+
 --!strict
 
 local runService = game:GetService("RunService")
