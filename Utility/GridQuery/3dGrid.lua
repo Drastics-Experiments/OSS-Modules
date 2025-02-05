@@ -39,6 +39,14 @@ local function isTableEmpty(tbl)
 end
 
 function grid:Add(pos, tag, data)
+    assert(typeof(pos) == "Vector3", "Expected Vector3, got " .. typeof(pos))
+    assert(tag ~= nil, "Arguement 2 was not provided")
+    assert(data ~= nil, "Arguement 3 was not provided")
+
+    if type(data) ~= "table" then
+        warn("Using DataTypes other than tables may result in unexpected behavior")
+    end
+
     local xCell = checkOrAdd(self.ActiveCells, toGrid(pos.X))
     local yCell = checkOrAdd(xCell, toGrid(pos.Y))
     local zCell = checkOrAdd(yCell, toGrid(pos.Z))
@@ -50,11 +58,19 @@ function grid:Add(pos, tag, data)
 end
 
 function grid:Update(position, tag, data)
+    assert(typeof(position) ~= "Vector3", "Expected Vector3, got: " .. typeof(position))
+    assert(tag ~= nil, "Arguement 2 was not provided")
+    assert(data ~= nil, "Arguement 3 was not provided")
+
     self:Remove(position, tag, data)
     self:Add(position, tag, data)
 end
 
 function grid:Remove(pos, tag, data)
+    assert(typeof(pos) == "Vector3", "Expected Vector3, got: " .. typeof(pos))
+    assert(tag ~= nil, "Arguement 2 was not provided")
+    assert(data ~= nil, "Arguement 3 was not provided")
+
     local cell = self:FindCell(vector.floor(pos / CELL_SIZE), tag)
     if not cell then return end
 
@@ -65,12 +81,14 @@ end
 function grid:Clear()
 	loopRecursive(self.ActiveCells, table.clear)
 	loopRecursive(self.DataStorage, table.clear)
-
+    table.clear(self.ActiveCells)
 	table.clear(self.DataStorage)
-    self:GarbageCollect()
 end
 
 function grid:FindCell(position, tag)
+    assert(typeof(position) == "Vector3", "Expected Vector3, got: " .. typeof(position))
+    assert(tag ~= nil, "Arguement 2 was not provided")
+
     local xCell = self.ActiveCells[position.X]
     if not xCell then return end
     
@@ -94,6 +112,10 @@ function grid:GarbageCollect()
 end
 
 function grid:FindCellsInRadius(position, radius, tag)
+    assert(typeof(position) == "Vector3", "Expected Vector3, got: " .. typeof(position))
+    assert(type(radius) == "number", "Expected number, got: " .. type(radius))
+    assert(tag ~= nil, "Arguement 3 was not provided")
+
     local foundCells = {}
 
     local cellOrigin = vector.floor(position / CELL_SIZE)
@@ -120,6 +142,10 @@ function grid:FindCellsInRadius(position, radius, tag)
 end
 
 function grid:FindObjectsInRadius(position, radius, tag)
+    assert(typeof(position) == "Vector3", "Expected Vector3, got: " .. typeof(position))
+    assert(type(radius) == "number", "Expected number, got: " .. type(radius))
+    assert(tag ~= nil, "Arguement 3 was not provided")
+
     local foundObjects = {}
 
     for _, cell in self:FindCellsInRadius(position, radius, tag) do
