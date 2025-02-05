@@ -1,3 +1,5 @@
+-- BindableFunction implementation
+
 local Module = {}
 local Index = {}
 
