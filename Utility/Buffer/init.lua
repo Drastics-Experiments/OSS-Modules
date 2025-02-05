@@ -1,3 +1,5 @@
+-- Deprecated, will be replaced with "SerializerPro" soon.
+
 local http = game:GetService("HttpService")
 local bufferLib = {}
 
